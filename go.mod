@@ -3,7 +3,7 @@ module github.com/moonkev/amps_kerberos
 go 1.24.1
 
 require (
-	github.com/alexbrainman/sspi v0.0.0-20210105120005-909beea2cc74
+	github.com/alexbrainman/sspi v0.0.0-20250919150558-7d374ff0d59e
 	github.com/jcmturner/gokrb5/v8 v8.4.4
 )
 
