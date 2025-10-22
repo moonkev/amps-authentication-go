@@ -5,9 +5,8 @@ package amps_kerberos
 import (
 	"fmt"
 
-	"github.com/60East/amps-go-client/amps"
-	"golang.org/x/sys/windows/sspi"
-	"golang.org/x/sys/windows/sspi/negotiate"
+	"github.com/alexbrainman/sspi/negotiate"
+	"github.com/moonkev/amps_kerberos/amps"
 )
 
 // AMPSKerberosSSPIAuthenticator provides Kerberos authentication for AMPS using Windows SSPI
@@ -37,8 +36,8 @@ func (auth *AMPSKerberosSSPIAuthenticator) Authenticate(username string, passwor
 		return "", fmt.Errorf("error creating SSPI context: %v", err)
 	}
 
-	output, err := auth.context.InitializeSecurityContext(auth.spn, nil, 0)
-	if err != nil && err != sspi.SEC_I_CONTINUE_NEEDED {
+	output, _, err := auth.context.InitializeSecurityContext(auth.spn, nil, 0)
+	if err != nil {
 		return "", fmt.Errorf("error initializing security context: %v", err)
 	}
 
@@ -56,8 +55,8 @@ func (auth *AMPSKerberosSSPIAuthenticator) Retry(username string, password strin
 		return "", err
 	}
 
-	output, err := auth.context.InitializeSecurityContext(auth.spn, inToken, 0)
-	if err != nil && err != sspi.SEC_I_CONTINUE_NEEDED {
+	output, _, err := auth.context.InitializeSecurityContext(auth.spn, inToken, 0)
+	if err != nil {
 		return "", fmt.Errorf("error in authentication step: %v", err)
 	}
 

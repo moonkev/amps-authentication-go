@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/60East/amps-go-client/amps"
-	"github.com/60East/amps_kerberos/amps_kerberos"
+	"github.com/moonkev/amps_kerberos/amps"
+	"github.com/moonkev/amps_kerberos/amps_kerberos"
 )
 
 func main() {
@@ -16,7 +16,7 @@ func main() {
 
 	// Create the Kerberos authenticator
 	// You can specify a custom krb5.conf path and credentials cache path if needed
-	auth, err := kerberos.NewAMPSKerberosAuthenticator(
+	auth, err := amps_kerberos.NewAuthenticator(
 		ampsSPN,
 		"/etc/krb5.conf",
 		"", // empty string means use default credentials cache
@@ -35,7 +35,10 @@ func main() {
 	}
 
 	// Attempt to log on with the authenticator
-	err = client.Logon(auth, 5000)
+	err = client.Logon(amps.LogonParams{
+		Authenticator: auth,
+		Timeout:       5000,
+	})
 	if err != nil {
 		fmt.Printf("Error logging on: %v\n", err)
 		os.Exit(1)

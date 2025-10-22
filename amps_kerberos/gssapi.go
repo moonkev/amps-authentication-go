@@ -3,21 +3,21 @@
 package amps_kerberos
 
 import (
+	"encoding/base64"
 	"fmt"
 
-	"github.com/60East/amps-go-client/amps"
 	"github.com/jcmturner/gokrb5/v8/client"
 	"github.com/jcmturner/gokrb5/v8/config"
 	"github.com/jcmturner/gokrb5/v8/credentials"
-	"github.com/jcmturner/gokrb5/v8/gssapi"
-	"github.com/jcmturner/gokrb5/v8/spnego"
+	"github.com/jcmturner/gokrb5/v8/messages"
+	"github.com/moonkev/amps_kerberos/amps"
 )
 
 // AMPSKerberosGSSAPIAuthenticator provides Kerberos GSSAPI authentication for AMPS
 type AMPSKerberosGSSAPIAuthenticator struct {
 	AuthBase
-	krb5Client  *client.Client
-	krb5Context gssapi.ContextHandle
+	krb5Client *client.Client
+	ticket     messages.Ticket
 }
 
 // NewAuthenticator creates a new Kerberos authenticator using GSSAPI
@@ -43,7 +43,7 @@ func NewAuthenticator(spn string, krb5ConfigPath string, ccachePath string) (amp
 			return nil, fmt.Errorf("error creating Kerberos client from ccache: %v", err)
 		}
 	} else {
-		cl = client.NewWithConfig(cfg)
+		cl = client.NewWithPassword("", "", "", cfg)
 	}
 
 	return &AMPSKerberosGSSAPIAuthenticator{
@@ -56,46 +56,34 @@ func NewAuthenticator(spn string, krb5ConfigPath string, ccachePath string) (amp
 
 // Authenticate implements the AMPS Authenticator interface
 func (auth *AMPSKerberosGSSAPIAuthenticator) Authenticate(username string, password string) (string, error) {
-	// Initialize SPNEGO
-	spnegoCl := spnego.NewClient(auth.krb5Client, auth.spn)
-	var err error
-	auth.krb5Context, err = spnegoCl.NewContext()
+	err := auth.krb5Client.Login()
 	if err != nil {
-		return "", fmt.Errorf("error creating SPNEGO context: %v", err)
+		return "", fmt.Errorf("error logging in: %v", err)
 	}
 
-	// Get initial token
-	token, err := auth.krb5Context.MakeAuthN()
+	tkt, _, err := auth.krb5Client.GetServiceTicket(auth.spn)
 	if err != nil {
-		return "", fmt.Errorf("error creating authentication token: %v", err)
+		return "", fmt.Errorf("error getting service ticket: %v", err)
 	}
 
-	return auth.encodeToken(token), nil
+	auth.ticket = tkt
+
+	// For now, just return the ticket bytes
+	ticketBytes, err := auth.ticket.Marshal()
+	if err != nil {
+		return "", fmt.Errorf("error marshalling ticket: %v", err)
+	}
+
+	return base64.StdEncoding.EncodeToString(ticketBytes), nil
 }
 
 // Retry implements the AMPS Authenticator interface
 func (auth *AMPSKerberosGSSAPIAuthenticator) Retry(username string, password string) (string, error) {
-	if auth.krb5Context == nil {
-		return "", fmt.Errorf("authentication context not initialized")
-	}
-
-	inToken, err := auth.decodeToken(password)
-	if err != nil {
-		return "", err
-	}
-
-	outToken, err := auth.krb5Context.Step(inToken)
-	if err != nil {
-		return "", fmt.Errorf("error in authentication step: %v", err)
-	}
-
-	return auth.encodeToken(outToken), nil
+	// For now, just acknowledge the retry
+	return "", nil
 }
 
 // Completed implements the AMPS Authenticator interface
 func (auth *AMPSKerberosGSSAPIAuthenticator) Completed(username string, password string, reason string) {
-	if auth.krb5Context != nil {
-		auth.krb5Context.Release()
-		auth.krb5Context = nil
-	}
+	// No cleanup needed for GSSAPI
 }
