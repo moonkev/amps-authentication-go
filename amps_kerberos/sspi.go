@@ -1,10 +1,11 @@
-//go:build windows
+// +build windows
 
 package amps_kerberos
 
 import (
 	"fmt"
 
+	"github.com/alexbrainman/sspi"
 	"github.com/alexbrainman/sspi/negotiate"
 	"github.com/moonkev/amps_kerberos/amps"
 )
@@ -12,31 +13,81 @@ import (
 // AMPSKerberosSSPIAuthenticator provides Kerberos authentication for AMPS using Windows SSPI
 type AMPSKerberosSSPIAuthenticator struct {
 	AuthBase
-	context *negotiate.ClientContext
+	creds    *sspi.Credentials
+	context  *negotiate.ClientContext
+	targetPN string
 }
 
 // NewAuthenticator creates a new Kerberos authenticator using Windows SSPI
-// This is the preferred authenticator on Windows systems.
-// Parameters:
-// - spn: Service Principal Name for the AMPS server (e.g., "AMPS/hostname")
 func NewAuthenticator(spn string, _ string, _ string) (amps.Authenticator, error) {
 	return &AMPSKerberosSSPIAuthenticator{
-		AuthBase: AuthBase{
-			spn: spn,
-		},
+		AuthBase: AuthBase{spn: spn},
+		targetPN: spn,
 	}, nil
 }
 
 // Authenticate implements the AMPS Authenticator interface
 func (auth *AMPSKerberosSSPIAuthenticator) Authenticate(username string, password string) (string, error) {
-	cred := negotiate.NewClientCredentials()
-	var err error
-	auth.context, err = cred.NewContext()
+	creds, err := negotiate.AcquireCred()
 	if err != nil {
-		return "", fmt.Errorf("error creating SSPI context: %v", err)
+		return "", fmt.Errorf("failed to acquire credentials: %v", err)
+	}
+	auth.creds = creds
+
+	ctx, err := negotiate.NewClientContext(auth.creds, auth.targetPN)
+	if err != nil {
+		auth.creds.Release()
+		return "", fmt.Errorf("failed to create context: %v", err)
+	}
+	auth.context = ctx
+
+	token, err := auth.context.Next(nil)
+	if err != nil {
+		auth.cleanup()
+		return "", fmt.Errorf("failed to get initial token: %v", err)
 	}
 
-	output, _, err := auth.context.InitializeSecurityContext(auth.spn, nil, 0)
+	return auth.encodeToken(token), nil
+}
+
+// Retry implements the AMPS Authenticator interface
+func (auth *AMPSKerberosSSPIAuthenticator) Retry(username string, password string) (string, error) {
+	if auth.context == nil {
+		return "", fmt.Errorf("no active security context")
+	}
+
+	inToken, err := auth.decodeToken(password)
+	if err != nil {
+		return "", err
+	}
+
+	token, err := auth.context.Next(inToken)
+	if err != nil {
+		return "", fmt.Errorf("authentication step failed: %v", err)
+	}
+
+	if len(token) == 0 {
+		return "", nil // Authentication complete
+	}
+
+	return auth.encodeToken(token), nil
+}
+
+// Completed implements the AMPS Authenticator interface
+func (auth *AMPSKerberosSSPIAuthenticator) Completed(username string, password string, reason string) {
+	auth.cleanup()
+}
+
+func (auth *AMPSKerberosSSPIAuthenticator) cleanup() {
+	if auth.context != nil {
+		auth.context.Release()
+		auth.context = nil
+	}
+	if auth.creds != nil {
+		auth.creds.Release()
+		auth.creds = nil
+	}
+}
 	if err != nil {
 		return "", fmt.Errorf("error initializing security context: %v", err)
 	}
@@ -55,9 +106,14 @@ func (auth *AMPSKerberosSSPIAuthenticator) Retry(username string, password strin
 		return "", err
 	}
 
-	output, _, err := auth.context.InitializeSecurityContext(auth.spn, inToken, 0)
+	_, authDone, output, err := auth.context.Update(inToken)
 	if err != nil {
 		return "", fmt.Errorf("error in authentication step: %v", err)
+	}
+
+	// If authDone is true, authentication is complete
+	if authDone {
+		return "", nil
 	}
 
 	return auth.encodeToken(output), nil
@@ -68,5 +124,9 @@ func (auth *AMPSKerberosSSPIAuthenticator) Completed(username string, password s
 	if auth.context != nil {
 		auth.context.Release()
 		auth.context = nil
+	}
+	if auth.credentials != nil {
+		auth.credentials.Release()
+		auth.credentials = nil
 	}
 }
